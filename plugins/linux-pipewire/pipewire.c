@@ -278,10 +278,10 @@ static const uint32_t supported_formats_async[] = {
 #define N_SUPPORTED_FORMATS_ASYNC (sizeof(supported_formats_async) / sizeof(supported_formats_async[0]))
 
 static const uint32_t supported_formats_sync[] = {
-	SPA_VIDEO_FORMAT_BGRA,       SPA_VIDEO_FORMAT_RGBA,       SPA_VIDEO_FORMAT_BGRx, SPA_VIDEO_FORMAT_RGBx,
 #if PW_CHECK_VERSION(0, 3, 41)
 	SPA_VIDEO_FORMAT_ABGR_210LE, SPA_VIDEO_FORMAT_xBGR_210LE,
 #endif
+	SPA_VIDEO_FORMAT_BGRA,       SPA_VIDEO_FORMAT_RGBA,       SPA_VIDEO_FORMAT_BGRx, SPA_VIDEO_FORMAT_RGBx,
 };
 
 #define N_SUPPORTED_FORMATS_SYNC (sizeof(supported_formats_sync) / sizeof(supported_formats_sync[0]))
@@ -638,16 +638,64 @@ static enum video_range_type video_color_range_from_spa_color_range(enum spa_vid
 	}
 }
 
+/* Determine colorspace and transfer function based on the SPA video format.
+ * Since PipeWire may not always provide colorimetry metadata, we use the
+ * format as a reliable indicator:
+ * - 10-bit ABGR/xBGR formats (ABGR_210LE, xBGR_210LE): BT.2020 + PQ (HDR)
+ * - 8-bit BGRA/RGBA/BGRx/RGBx formats: BT.709 + sRGB (SDR) */
+static enum video_colorspace video_colorspace_from_spa_format(uint32_t spa_format)
+{
+	switch (spa_format) {
+#if PW_CHECK_VERSION(0, 3, 41)
+	case SPA_VIDEO_FORMAT_ABGR_210LE:
+	case SPA_VIDEO_FORMAT_xBGR_210LE:
+		return VIDEO_CS_2100_PQ;
+#endif
+	case SPA_VIDEO_FORMAT_BGRA:
+	case SPA_VIDEO_FORMAT_RGBA:
+	case SPA_VIDEO_FORMAT_BGRx:
+	case SPA_VIDEO_FORMAT_RGBx:
+	default:
+		return VIDEO_CS_709;
+	}
+}
+
+static enum video_trc video_trc_from_spa_format(uint32_t spa_format)
+{
+	switch (spa_format) {
+#if PW_CHECK_VERSION(0, 3, 41)
+	case SPA_VIDEO_FORMAT_ABGR_210LE:
+	case SPA_VIDEO_FORMAT_xBGR_210LE:
+		return VIDEO_TRC_PQ;
+#endif
+	case SPA_VIDEO_FORMAT_BGRA:
+	case SPA_VIDEO_FORMAT_RGBA:
+	case SPA_VIDEO_FORMAT_BGRx:
+	case SPA_VIDEO_FORMAT_RGBx:
+	default:
+		return VIDEO_TRC_SRGB;
+	}
+}
+
 static bool prepare_obs_frame(obs_pipewire_stream *obs_pw_stream, struct obs_source_frame *frame)
 {
 	struct obs_pw_video_format obs_pw_video_format;
+	enum video_colorspace colorspace;
+	enum video_trc trc;
 
 	frame->width = obs_pw_stream->format.info.raw.size.width;
 	frame->height = obs_pw_stream->format.info.raw.size.height;
 
-	video_format_get_parameters(video_colorspace_from_spa_color_matrix(obs_pw_stream->format.info.raw.color_matrix),
-				    video_color_range_from_spa_color_range(obs_pw_stream->format.info.raw.color_range),
-				    frame->color_matrix, frame->color_range_min, frame->color_range_max);
+	/* Determine colorspace and TRC based on format (more reliable than SPA metadata) */
+	colorspace = video_colorspace_from_spa_format(obs_pw_stream->format.info.raw.format);
+	trc = video_trc_from_spa_format(obs_pw_stream->format.info.raw.format);
+
+	/* For HDR (BT.2020 + PQ), use full range by default */
+	enum video_range_type range = (colorspace == VIDEO_CS_2100_PQ) ? VIDEO_RANGE_FULL :
+				      video_color_range_from_spa_color_range(obs_pw_stream->format.info.raw.color_range);
+
+	video_format_get_parameters(colorspace, range, frame->color_matrix, frame->color_range_min,
+				    frame->color_range_max);
 
 	if (!obs_pw_video_format_from_spa_format(obs_pw_stream->format.info.raw.format, &obs_pw_video_format) ||
 	    obs_pw_video_format.video_format == VIDEO_FORMAT_NONE)
@@ -655,6 +703,7 @@ static bool prepare_obs_frame(obs_pipewire_stream *obs_pw_stream, struct obs_sou
 
 	frame->format = obs_pw_video_format.video_format;
 	frame->linesize[0] = SPA_ROUND_UP_N(frame->width * obs_pw_video_format.bpp, 4);
+	frame->trc = trc;
 	return true;
 }
 
@@ -1321,12 +1370,9 @@ uint32_t obs_pipewire_stream_get_height(obs_pipewire_stream *obs_pw_stream)
 	}
 }
 
-void obs_pipewire_stream_video_render(obs_pipewire_stream *obs_pw_stream, gs_effect_t *effect)
+void obs_pipewire_stream_video_render(obs_pipewire_stream *obs_pw_stream, gs_effect_t *unused)
 {
-	bool rotated;
-	int flip = 0;
-
-	gs_eparam_t *image;
+	UNUSED_PARAMETER(unused);
 
 	if (!obs_pw_stream->texture)
 		return;
@@ -1338,14 +1384,46 @@ void obs_pipewire_stream_video_render(obs_pipewire_stream *obs_pw_stream, gs_eff
 		gs_sync_destroy(acquire_sync);
 	}
 
-	/* FIXME: Use obs_pw_stream->format.info.raw colorimetry info to handle
-	 * textures in their corresponding color space */
-	image = gs_effect_get_param_by_name(effect, "image");
+	gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+	const enum gs_color_space current_space = gs_get_color_space();
+
+	/* Select technique and multiplier based on negotiated format.
+	 * 10-bit PQ formats need PQ EOTF decoding + BT.2020→BT.709
+	 * conversion via DrawPQ/DrawTonemapPQ techniques. */
+	const char *tech_name = "Draw";
+	float multiplier = 1.0f;
+
+#if PW_CHECK_VERSION(0, 3, 41)
+	switch (obs_pw_stream->format.info.raw.format) {
+	case SPA_VIDEO_FORMAT_ABGR_210LE:
+	case SPA_VIDEO_FORMAT_xBGR_210LE:
+		switch (current_space) {
+		case GS_CS_SRGB:
+		case GS_CS_SRGB_16F:
+			tech_name = "DrawTonemapPQ";
+			multiplier = 10000.f / obs_get_video_sdr_white_level();
+			break;
+		case GS_CS_709_EXTENDED:
+			tech_name = "DrawPQ";
+			multiplier = 10000.f / obs_get_video_sdr_white_level();
+			break;
+		case GS_CS_709_SCRGB:
+			tech_name = "DrawPQ";
+			multiplier = 10000.f / 80.f;
+			break;
+		}
+		break;
+	default:
+		break;
+	}
+#endif
+
+	gs_eparam_t *image = gs_effect_get_param_by_name(effect, "image");
 	gs_effect_set_texture(image, obs_pw_stream->texture);
+	gs_effect_set_float(gs_effect_get_param_by_name(effect, "multiplier"), multiplier);
 
-	rotated = push_rotation(obs_pw_stream);
-
-	flip = get_buffer_flip(obs_pw_stream);
+	bool rotated = push_rotation(obs_pw_stream);
+	int flip = get_buffer_flip(obs_pw_stream);
 
 	/* There is a SPA_VIDEO_FLAG_PREMULTIPLIED_ALPHA flag, but it does not
 	 * seem to be fully implemented nor ever set. Just assume premultiplied
@@ -1358,25 +1436,41 @@ void obs_pipewire_stream_video_render(obs_pipewire_stream *obs_pw_stream, gs_eff
 	gs_blend_state_push();
 	gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
 
-	if (has_effective_crop(obs_pw_stream)) {
-		gs_draw_sprite_subregion(obs_pw_stream->texture, flip, obs_pw_stream->crop.x, obs_pw_stream->crop.y,
-					 obs_pw_stream->crop.width, obs_pw_stream->crop.height);
-	} else {
-		gs_draw_sprite(obs_pw_stream->texture, flip, 0, 0);
+	while (gs_effect_loop(effect, tech_name)) {
+		if (has_effective_crop(obs_pw_stream)) {
+			gs_draw_sprite_subregion(obs_pw_stream->texture, flip, obs_pw_stream->crop.x,
+						 obs_pw_stream->crop.y, obs_pw_stream->crop.width,
+						 obs_pw_stream->crop.height);
+		} else {
+			gs_draw_sprite(obs_pw_stream->texture, flip, 0, 0);
+		}
 	}
 
 	if (rotated)
 		gs_matrix_pop();
 
+	/* Cursor bitmap is always SDR */
 	if (obs_pw_stream->cursor.visible && obs_pw_stream->cursor.valid && obs_pw_stream->cursor.texture) {
 		float cursor_x = obs_pw_stream->cursor.x - obs_pw_stream->cursor.hotspot_x;
 		float cursor_y = obs_pw_stream->cursor.y - obs_pw_stream->cursor.hotspot_y;
+
+		const char *cursor_tech = "Draw";
+		float cursor_mult = 1.0f;
+		if (current_space == GS_CS_709_SCRGB) {
+			cursor_tech = "DrawMultiply";
+			cursor_mult = obs_get_video_sdr_white_level() / 80.f;
+		}
 
 		gs_matrix_push();
 		gs_matrix_translate3f(cursor_x, cursor_y, 0.0f);
 
 		gs_effect_set_texture(image, obs_pw_stream->cursor.texture);
-		gs_draw_sprite(obs_pw_stream->texture, 0, obs_pw_stream->cursor.width, obs_pw_stream->cursor.height);
+		gs_effect_set_float(gs_effect_get_param_by_name(effect, "multiplier"), cursor_mult);
+
+		while (gs_effect_loop(effect, cursor_tech)) {
+			gs_draw_sprite(obs_pw_stream->cursor.texture, 0, obs_pw_stream->cursor.width,
+				       obs_pw_stream->cursor.height);
+		}
 
 		gs_matrix_pop();
 	}
@@ -1390,6 +1484,40 @@ void obs_pipewire_stream_video_render(obs_pipewire_stream *obs_pw_stream, gs_eff
 		gs_sync_destroy(release_sync);
 		obs_pw_stream->sync.release_point_will_signal = true;
 	}
+}
+
+enum gs_color_space obs_pipewire_stream_get_color_space(obs_pipewire_stream *obs_pw_stream, size_t count,
+							const enum gs_color_space *preferred_spaces)
+{
+	enum gs_color_space capture_space = GS_CS_SRGB;
+
+	if (!obs_pw_stream->negotiated)
+		goto negotiate;
+
+	switch (obs_pw_stream->format.info.raw.format) {
+#if PW_CHECK_VERSION(0, 3, 41)
+	case SPA_VIDEO_FORMAT_ABGR_210LE:
+	case SPA_VIDEO_FORMAT_xBGR_210LE:
+		for (size_t i = 0; i < count; ++i) {
+			if (preferred_spaces[i] == GS_CS_709_SCRGB)
+				return GS_CS_709_SCRGB;
+		}
+		capture_space = GS_CS_709_EXTENDED;
+		break;
+#endif
+	default:
+		break;
+	}
+
+negotiate:;
+	enum gs_color_space space = capture_space;
+	for (size_t i = 0; i < count; ++i) {
+		space = preferred_spaces[i];
+		if (space == capture_space)
+			break;
+	}
+
+	return space;
 }
 
 void obs_pipewire_stream_set_cursor_visible(obs_pipewire_stream *obs_pw_stream, bool cursor_visible)

@@ -671,6 +671,17 @@ static void screencast_portal_capture_video_render(void *data, gs_effect_t *effe
 		obs_pipewire_stream_video_render(capture->obs_pw_stream, effect);
 }
 
+static enum gs_color_space screencast_portal_capture_get_color_space(void *data, size_t count,
+								     const enum gs_color_space *preferred_spaces)
+{
+	struct screencast_portal_capture *capture = data;
+
+	if (capture->obs_pw_stream)
+		return obs_pipewire_stream_get_color_space(capture->obs_pw_stream, count, preferred_spaces);
+
+	return GS_CS_SRGB;
+}
+
 void screencast_portal_load(void)
 {
 	uint32_t available_capture_types = get_available_capture_types();
@@ -692,7 +703,7 @@ void screencast_portal_load(void)
 	const struct obs_source_info screencast_portal_desktop_capture_info = {
 		.id = "pipewire-desktop-capture-source",
 		.type = OBS_SOURCE_TYPE_INPUT,
-		.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CAP_OBSOLETE,
+		.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB | OBS_SOURCE_CAP_OBSOLETE,
 		.get_name = screencast_portal_desktop_capture_get_name,
 		.create = screencast_portal_desktop_capture_create,
 		.destroy = screencast_portal_capture_destroy,
@@ -705,6 +716,7 @@ void screencast_portal_load(void)
 		.get_width = screencast_portal_capture_get_width,
 		.get_height = screencast_portal_capture_get_height,
 		.video_render = screencast_portal_capture_video_render,
+		.video_get_color_space = screencast_portal_capture_get_color_space,
 		.icon_type = OBS_ICON_TYPE_DESKTOP_CAPTURE,
 	};
 	if (desktop_capture_available)
@@ -714,7 +726,7 @@ void screencast_portal_load(void)
 	const struct obs_source_info screencast_portal_window_capture_info = {
 		.id = "pipewire-window-capture-source",
 		.type = OBS_SOURCE_TYPE_INPUT,
-		.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CAP_OBSOLETE,
+		.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB | OBS_SOURCE_CAP_OBSOLETE,
 		.get_name = screencast_portal_window_capture_get_name,
 		.create = screencast_portal_window_capture_create,
 		.destroy = screencast_portal_capture_destroy,
@@ -727,6 +739,7 @@ void screencast_portal_load(void)
 		.get_width = screencast_portal_capture_get_width,
 		.get_height = screencast_portal_capture_get_height,
 		.video_render = screencast_portal_capture_video_render,
+		.video_get_color_space = screencast_portal_capture_get_color_space,
 		.icon_type = OBS_ICON_TYPE_WINDOW_CAPTURE,
 	};
 	if (window_capture_available)
@@ -736,7 +749,7 @@ void screencast_portal_load(void)
 	const struct obs_source_info screencast_portal_capture_info = {
 		.id = "pipewire-screen-capture-source",
 		.type = OBS_SOURCE_TYPE_INPUT,
-		.output_flags = OBS_SOURCE_VIDEO,
+		.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB,
 		.get_name = screencast_portal_desktop_capture_get_name,
 		.create = screencast_portal_capture_create,
 		.destroy = screencast_portal_capture_destroy,
@@ -749,6 +762,7 @@ void screencast_portal_load(void)
 		.get_width = screencast_portal_capture_get_width,
 		.get_height = screencast_portal_capture_get_height,
 		.video_render = screencast_portal_capture_video_render,
+		.video_get_color_space = screencast_portal_capture_get_color_space,
 		.icon_type = OBS_ICON_TYPE_DESKTOP_CAPTURE,
 	};
 	obs_register_source(&screencast_portal_capture_info);

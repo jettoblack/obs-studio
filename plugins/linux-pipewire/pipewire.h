@@ -56,6 +56,8 @@ uint32_t obs_pipewire_stream_get_width(obs_pipewire_stream *obs_pw_stream);
 uint32_t obs_pipewire_stream_get_height(obs_pipewire_stream *obs_pw_stream);
 void obs_pipewire_stream_video_render(obs_pipewire_stream *obs_pw_stream, gs_effect_t *effect);
 
+enum gs_color_space obs_pipewire_stream_get_color_space(obs_pipewire_stream *obs_pw_stream, size_t count,
+							const enum gs_color_space *preferred_spaces);
 void obs_pipewire_stream_set_cursor_visible(obs_pipewire_stream *obs_pw_stream, bool cursor_visible);
 void obs_pipewire_stream_destroy(obs_pipewire_stream *obs_pw_stream);
 
