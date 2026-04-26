@@ -226,22 +226,23 @@ static bool create_video_stream(struct ffmpeg_data *data)
 	const bool hlg = trc == AVCOL_TRC_ARIB_STD_B67;
 	if (pq || hlg) {
 		const int hdr_nominal_peak_level = pq ? (int)obs_get_video_hdr_nominal_peak_level() : (hlg ? 1000 : 0);
+		const int sdr_white_level         = (int)obs_get_video_sdr_white_level();
 
 		size_t content_size;
 		AVContentLightMetadata *const content = av_content_light_metadata_alloc(&content_size);
 		content->MaxCLL = hdr_nominal_peak_level;
-		content->MaxFALL = hdr_nominal_peak_level;
+		content->MaxFALL = sdr_white_level;
 		av_packet_side_data_add(&data->video->codecpar->coded_side_data,
 					&data->video->codecpar->nb_coded_side_data, AV_PKT_DATA_CONTENT_LIGHT_LEVEL,
 					(uint8_t *)content, content_size, 0);
 
 		AVMasteringDisplayMetadata *const mastering = av_mastering_display_metadata_alloc();
-		mastering->display_primaries[0][0] = av_make_q(17, 25);
-		mastering->display_primaries[0][1] = av_make_q(8, 25);
-		mastering->display_primaries[1][0] = av_make_q(53, 200);
-		mastering->display_primaries[1][1] = av_make_q(69, 100);
-		mastering->display_primaries[2][0] = av_make_q(3, 20);
-		mastering->display_primaries[2][1] = av_make_q(3, 50);
+        mastering->display_primaries[0][0] = av_make_q(708, 1000);
+        mastering->display_primaries[0][1] = av_make_q(292, 1000);
+        mastering->display_primaries[1][0] = av_make_q(170, 1000);
+        mastering->display_primaries[1][1] = av_make_q(797, 1000);
+        mastering->display_primaries[2][0] = av_make_q(131, 1000);
+        mastering->display_primaries[2][1] = av_make_q(46,  1000);
 		mastering->white_point[0] = av_make_q(3127, 10000);
 		mastering->white_point[1] = av_make_q(329, 1000);
 		mastering->min_luminance = av_make_q(0, 1);

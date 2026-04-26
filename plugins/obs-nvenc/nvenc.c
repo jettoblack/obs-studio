@@ -816,20 +816,20 @@ static bool init_encoder(struct nvenc_data *enc, enum codec_type codec, obs_data
 		enc->mdi = bzalloc(sizeof(MASTERING_DISPLAY_INFO));
 		const uint16_t hdr_nominal_peak_level = pq ? (uint16_t)obs_get_video_hdr_nominal_peak_level()
 							   : (hlg ? 1000 : 0);
-		/* Currently these are hardcoded across all encoders. */
-		enc->mdi->r.x = 13250;
-		enc->mdi->r.y = 34500;
-		enc->mdi->g.x = 7500;
-		enc->mdi->g.y = 3000;
-		enc->mdi->b.x = 34000;
-		enc->mdi->b.y = 16000;
+		/* BT.2020 primaries for Rec 2100. */
+		enc->mdi->r.x = 35400;
+		enc->mdi->r.y = 14600;
+		enc->mdi->g.x = 8500;
+		enc->mdi->g.y = 39850;
+		enc->mdi->b.x = 6550;
+		enc->mdi->b.y = 2300;
 		enc->mdi->whitePoint.x = 15635;
 		enc->mdi->whitePoint.y = 16450;
 		enc->mdi->maxLuma = hdr_nominal_peak_level * 10000;
 		enc->mdi->minLuma = 0;
 
 		enc->cll->maxContentLightLevel = hdr_nominal_peak_level;
-		enc->cll->maxPicAverageLightLevel = hdr_nominal_peak_level;
+		enc->cll->maxPicAverageLightLevel = (uint16_t)obs_get_video_sdr_white_level();
 	}
 #endif
 

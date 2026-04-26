@@ -95,6 +95,7 @@ struct main_params {
 	int color_range;
 	int chroma_sample_location;
 	int max_luminance;
+	int sdr_white_level;
 	char *acodec;
 	char *muxer_settings;
 	int codec_tag;
@@ -378,6 +379,8 @@ static bool init_params(int *argc, char ***argv, struct main_params *params, str
 			return false;
 		if (!get_opt_int(argc, argv, &params->max_luminance, "video max luminance"))
 			return false;
+		if (!get_opt_int(argc, argv, &params->sdr_white_level, "video sdr white level"))
+			return false;
 		if (!get_opt_int(argc, argv, &params->fps_num, "video fps num"))
 			return false;
 		if (!get_opt_int(argc, argv, &params->fps_den, "video fps den"))
@@ -478,18 +481,18 @@ static void create_video_stream(struct ffmpeg_mux *ffm)
 		size_t content_size;
 		AVContentLightMetadata *const content = av_content_light_metadata_alloc(&content_size);
 		content->MaxCLL = max_luminance;
-		content->MaxFALL = max_luminance;
+		content->MaxFALL = ffm->params.sdr_white_level;
 		av_packet_side_data_add(&ffm->video_stream->codecpar->coded_side_data,
 					&ffm->video_stream->codecpar->nb_coded_side_data,
 					AV_PKT_DATA_CONTENT_LIGHT_LEVEL, (uint8_t *)content, content_size, 0);
 
 		AVMasteringDisplayMetadata *const mastering = av_mastering_display_metadata_alloc();
-		mastering->display_primaries[0][0] = av_make_q(17, 25);
-		mastering->display_primaries[0][1] = av_make_q(8, 25);
-		mastering->display_primaries[1][0] = av_make_q(53, 200);
-		mastering->display_primaries[1][1] = av_make_q(69, 100);
-		mastering->display_primaries[2][0] = av_make_q(3, 20);
-		mastering->display_primaries[2][1] = av_make_q(3, 50);
+        mastering->display_primaries[0][0] = av_make_q(708, 1000);
+        mastering->display_primaries[0][1] = av_make_q(292, 1000);
+        mastering->display_primaries[1][0] = av_make_q(170, 1000);
+        mastering->display_primaries[1][1] = av_make_q(797, 1000);
+        mastering->display_primaries[2][0] = av_make_q(131, 1000);
+        mastering->display_primaries[2][1] = av_make_q(46,  1000);
 		mastering->white_point[0] = av_make_q(3127, 10000);
 		mastering->white_point[1] = av_make_q(329, 1000);
 		mastering->min_luminance = av_make_q(0, 1);

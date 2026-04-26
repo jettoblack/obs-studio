@@ -182,7 +182,8 @@ static void add_video_encoder_params(struct ffmpeg_muxer *stream, os_process_arg
 		determine_chroma_location(obs_to_ffmpeg_video_format(info->format), spc);
 
 	const int max_luminance = (trc == AVCOL_TRC_SMPTE2084) ? (int)obs_get_video_hdr_nominal_peak_level()
-							       : ((trc == AVCOL_TRC_ARIB_STD_B67) ? 1000 : 0);
+								   : ((trc == AVCOL_TRC_ARIB_STD_B67) ? 1000 : 0);
+	const int sdr_white_level = (int)obs_get_video_sdr_white_level();
 
 	os_process_args_add_arg(args, obs_encoder_get_codec(vencoder));
 	os_process_args_add_argf(args, "%d", bitrate);
@@ -194,6 +195,7 @@ static void add_video_encoder_params(struct ffmpeg_muxer *stream, os_process_arg
 	os_process_args_add_argf(args, "%d", (int)range);
 	os_process_args_add_argf(args, "%d", (int)chroma_location);
 	os_process_args_add_argf(args, "%d", max_luminance);
+	os_process_args_add_argf(args, "%d", sdr_white_level);
 	os_process_args_add_argf(args, "%d", (int)info->fps_num);
 	os_process_args_add_argf(args, "%d", (int)info->fps_den);
 	os_process_args_add_argf(args, "%d", codec_tag);

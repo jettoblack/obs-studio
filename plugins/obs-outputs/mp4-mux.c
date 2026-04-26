@@ -618,10 +618,11 @@ static size_t mp4_write_clli(struct mp4_mux *mux, obs_encoder_t *enc)
 
 	write_box(s, 12, "clli");
 
-	float nominal_peak = obs_get_video_hdr_nominal_peak_level();
+	float nominal_peak  = obs_get_video_hdr_nominal_peak_level();
+	float sdr_white     = obs_get_video_sdr_white_level();
 
 	s_wb16(s, (uint16_t)nominal_peak); // max_content_light_level
-	s_wb16(s, (uint16_t)nominal_peak); // max_pic_average_light_level
+	s_wb16(s, (uint16_t)sdr_white);    // max_pic_average_light_level
 
 	return 12;
 }
@@ -646,13 +647,13 @@ static size_t mp4_write_mdcv(struct mp4_mux *mux, obs_encoder_t *enc)
 	/* Note that these values are hardcoded everywhere in OBS, so these are
 	 * just the same as used in our other muxers/encoders. */
 
-	// 3 x display_primaries (x, y) pairs
-	s_wb16(s, 13250);
-	s_wb16(s, 34500);
-	s_wb16(s, 7500);
-	s_wb16(s, 3000);
-	s_wb16(s, 34000);
-	s_wb16(s, 16000);
+	// 3 x display_primaries (x, y) pairs (BT.2020)
+	s_wb16(s, 35400);
+	s_wb16(s, 14600);
+	s_wb16(s, 8500);
+	s_wb16(s, 39850);
+	s_wb16(s, 6550);
+	s_wb16(s, 2300);
 
 	s_wb16(s, 15635);   // white_point_x
 	s_wb16(s, 16450);   // white_point_y

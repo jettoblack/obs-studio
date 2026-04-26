@@ -196,7 +196,7 @@ HRESULT HDRVideoFrame::GetFloat(BMDDeckLinkFrameMetadataID metadataID, double *v
 		break;
 
 	case bmdDeckLinkFrameMetadataHDRMaximumFrameAverageLightLevel:
-		*value = obs_get_video_hdr_nominal_peak_level();
+		*value = obs_get_video_sdr_white_level();
 		break;
 
 	default:

@@ -206,12 +206,12 @@ static CFDataRef obs_to_vt_masteringdisplay(uint32_t hdr_nominal_peak_level)
 	static_assert(sizeof(struct mastering_display_colour_volume) == 24, "May need to adjust struct packing");
 
 	struct mastering_display_colour_volume mdcv;
-	mdcv.display_primaries[0][0] = __builtin_bswap16(13250);
-	mdcv.display_primaries[0][1] = __builtin_bswap16(34500);
-	mdcv.display_primaries[1][0] = __builtin_bswap16(7500);
-	mdcv.display_primaries[1][1] = __builtin_bswap16(3000);
-	mdcv.display_primaries[2][0] = __builtin_bswap16(34000);
-	mdcv.display_primaries[2][1] = __builtin_bswap16(16000);
+	mdcv.display_primaries[0][0] = __builtin_bswap16(35400);
+	mdcv.display_primaries[0][1] = __builtin_bswap16(14600);
+	mdcv.display_primaries[1][0] = __builtin_bswap16(8500);
+	mdcv.display_primaries[1][1] = __builtin_bswap16(39850);
+	mdcv.display_primaries[2][0] = __builtin_bswap16(6550);
+	mdcv.display_primaries[2][1] = __builtin_bswap16(2300);
 	mdcv.white_point[0] = __builtin_bswap16(15635);
 	mdcv.white_point[1] = __builtin_bswap16(16450);
 	mdcv.max_display_mastering_luminance = __builtin_bswap32(hdr_nominal_peak_level * 10000);
@@ -223,7 +223,7 @@ static CFDataRef obs_to_vt_masteringdisplay(uint32_t hdr_nominal_peak_level)
 }
 
 /* Adapted from Chromium GenerateContentLightLevelInfo */
-static CFDataRef obs_to_vt_contentlightlevelinfo(uint16_t hdr_nominal_peak_level)
+static CFDataRef obs_to_vt_contentlightlevelinfo(uint16_t hdr_nominal_peak_level, uint16_t sdr_white_level)
 {
 	struct content_light_level_info {
 		uint16_t max_content_light_level;
@@ -233,7 +233,7 @@ static CFDataRef obs_to_vt_contentlightlevelinfo(uint16_t hdr_nominal_peak_level
 
 	struct content_light_level_info clli;
 	clli.max_content_light_level = __builtin_bswap16(hdr_nominal_peak_level);
-	clli.max_pic_average_light_level = __builtin_bswap16(hdr_nominal_peak_level);
+	clli.max_pic_average_light_level = __builtin_bswap16(sdr_white_level);
 
 	UInt8 bytes[sizeof(struct content_light_level_info)];
 	memcpy(bytes, &clli, sizeof(bytes));
@@ -364,9 +364,10 @@ static OSStatus session_set_colorspace(VTCompressionSessionRef session, enum vid
 
 	if (cs == VIDEO_CS_2100_PQ) {
 		const uint16_t hdr_nominal_peak_level = (uint16_t)obs_get_video_hdr_nominal_peak_level();
+		const uint16_t sdr_white_level = (uint16_t)obs_get_video_sdr_white_level();
 
 		masteringDisplayColorVolume = obs_to_vt_masteringdisplay(hdr_nominal_peak_level);
-		contentLightLevel = obs_to_vt_contentlightlevelinfo(hdr_nominal_peak_level);
+		contentLightLevel = obs_to_vt_contentlightlevelinfo(hdr_nominal_peak_level, sdr_white_level);
 
 		keys[3] = kVTCompressionPropertyKey_MasteringDisplayColorVolume;
 		keys[4] = kVTCompressionPropertyKey_ContentLightLevelInfo;
@@ -374,7 +375,7 @@ static OSStatus session_set_colorspace(VTCompressionSessionRef session, enum vid
 		values[4] = contentLightLevel;
 	} else if (cs == VIDEO_CS_2100_HLG) {
 		masteringDisplayColorVolume = obs_to_vt_masteringdisplay(1000);
-		contentLightLevel = obs_to_vt_contentlightlevelinfo(1000);
+		contentLightLevel = obs_to_vt_contentlightlevelinfo(1000, (uint16_t)obs_get_video_sdr_white_level());
 
 		keys[3] = kVTCompressionPropertyKey_MasteringDisplayColorVolume;
 		keys[4] = kVTCompressionPropertyKey_ContentLightLevelInfo;
@@ -1090,7 +1091,7 @@ bool get_cached_pixel_buffer(struct vt_encoder *enc, CVPixelBufferRef *buf)
 		const uint16_t hdr_nominal_peak_level = pq ? (uint16_t)obs_get_video_hdr_nominal_peak_level()
 							   : (hlg ? 1000 : 0);
 		CFDataRef masteringDisplayColorVolume = obs_to_vt_masteringdisplay(hdr_nominal_peak_level);
-		CFDataRef contentLightLevel = obs_to_vt_contentlightlevelinfo(hdr_nominal_peak_level);
+		CFDataRef contentLightLevel = obs_to_vt_contentlightlevelinfo(hdr_nominal_peak_level, (uint16_t)obs_get_video_sdr_white_level());
 
 		CVBufferSetAttachment(pixbuf, kCVImageBufferMasteringDisplayColorVolumeKey, masteringDisplayColorVolume,
 				      kCVAttachmentMode_ShouldPropagate);

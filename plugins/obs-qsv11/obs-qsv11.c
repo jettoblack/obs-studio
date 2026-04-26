@@ -557,19 +557,19 @@ static void update_params(struct obs_qsv *obsqsv, obs_data_t *settings)
 	if (pq || hlg) {
 		const int hdr_nominal_peak_level = pq ? (int)obs_get_video_hdr_nominal_peak_level() : (hlg ? 1000 : 0);
 
-		obsqsv->params.DisplayPrimariesX[0] = 13250;
-		obsqsv->params.DisplayPrimariesX[1] = 7500;
-		obsqsv->params.DisplayPrimariesX[2] = 34000;
-		obsqsv->params.DisplayPrimariesY[0] = 34500;
-		obsqsv->params.DisplayPrimariesY[1] = 3000;
-		obsqsv->params.DisplayPrimariesY[2] = 16000;
+		obsqsv->params.DisplayPrimariesX[0] = 35400;
+		obsqsv->params.DisplayPrimariesX[1] = 14600;
+		obsqsv->params.DisplayPrimariesX[2] = 8500;
+		obsqsv->params.DisplayPrimariesY[0] = 39850;
+		obsqsv->params.DisplayPrimariesY[1] = 6550;
+		obsqsv->params.DisplayPrimariesY[2] = 2300;
 		obsqsv->params.WhitePointX = 15635;
 		obsqsv->params.WhitePointY = 16450;
 		obsqsv->params.MaxDisplayMasteringLuminance = hdr_nominal_peak_level * 10000;
 		obsqsv->params.MinDisplayMasteringLuminance = 0;
 
 		obsqsv->params.MaxContentLightLevel = hdr_nominal_peak_level;
-		obsqsv->params.MaxPicAverageLightLevel = hdr_nominal_peak_level;
+		obsqsv->params.MaxPicAverageLightLevel = (int)obs_get_video_sdr_white_level();
 	}
 
 	/* internal convenience parameter, overrides rate control param
