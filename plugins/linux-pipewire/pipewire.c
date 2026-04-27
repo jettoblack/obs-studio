@@ -612,20 +612,6 @@ static uint32_t get_spa_buffer_plane_count(const struct spa_buffer *buffer)
 	return plane_count;
 }
 
-static enum video_colorspace video_colorspace_from_spa_color_matrix(enum spa_video_color_matrix matrix)
-{
-	switch (matrix) {
-	case SPA_VIDEO_COLOR_MATRIX_RGB:
-		return VIDEO_CS_DEFAULT;
-	case SPA_VIDEO_COLOR_MATRIX_BT601:
-		return VIDEO_CS_601;
-	case SPA_VIDEO_COLOR_MATRIX_BT709:
-		return VIDEO_CS_709;
-	default:
-		return VIDEO_CS_DEFAULT;
-	}
-}
-
 static enum video_range_type video_color_range_from_spa_color_range(enum spa_video_color_range colorrange)
 {
 	switch (colorrange) {
@@ -638,66 +624,102 @@ static enum video_range_type video_color_range_from_spa_color_range(enum spa_vid
 	}
 }
 
-/* Determine colorspace and transfer function based on the SPA video format.
- * Since PipeWire may not always provide colorimetry metadata, we use the
- * format as a reliable indicator:
- * - 10-bit ABGR/xBGR formats (ABGR_210LE, xBGR_210LE): BT.2020 + PQ (HDR)
+/* Determine colorspace from SPA color_matrix + transfer_function when
+ * PipeWire provides them (non-UNKNOWN). Falls back to format-based
+ * defaults:
+ * - 10-bit ABGR/xBGR formats: BT.2020 + PQ (HDR)
  * - 8-bit BGRA/RGBA/BGRx/RGBx formats: BT.709 + sRGB (SDR) */
-static enum video_colorspace video_colorspace_from_spa_format(uint32_t spa_format)
+static enum video_colorspace video_colorspace_from_spa_info_raw(const struct spa_video_info_raw *info)
 {
-	switch (spa_format) {
-#if PW_CHECK_VERSION(0, 3, 41)
-	case SPA_VIDEO_FORMAT_ABGR_210LE:
-	case SPA_VIDEO_FORMAT_xBGR_210LE:
-		return VIDEO_CS_2100_PQ;
+	enum spa_video_color_matrix matrix = info->color_matrix;
+	enum spa_video_transfer_function transfer = info->transfer_function;
+
+	if (matrix != SPA_VIDEO_COLOR_MATRIX_UNKNOWN && transfer != SPA_VIDEO_TRANSFER_UNKNOWN) {
+#if PW_CHECK_VERSION(1, 6, 0)
+		if (matrix == SPA_VIDEO_COLOR_MATRIX_BT2020) {
+			if (transfer == SPA_VIDEO_TRANSFER_SMPTE2084)
+				return VIDEO_CS_2100_PQ;
+			if (transfer == SPA_VIDEO_TRANSFER_ARIB_STD_B67)
+				return VIDEO_CS_2100_HLG;
+		}
 #endif
-	case SPA_VIDEO_FORMAT_BGRA:
-	case SPA_VIDEO_FORMAT_RGBA:
-	case SPA_VIDEO_FORMAT_BGRx:
-	case SPA_VIDEO_FORMAT_RGBx:
-	default:
-		return VIDEO_CS_709;
+		switch (matrix) {
+		case SPA_VIDEO_COLOR_MATRIX_RGB:
+			return VIDEO_CS_DEFAULT;
+		case SPA_VIDEO_COLOR_MATRIX_BT601:
+			return VIDEO_CS_601;
+		case SPA_VIDEO_COLOR_MATRIX_BT709:
+			return VIDEO_CS_709;
+		default:
+			break;
+		}
 	}
+
+#if PW_CHECK_VERSION(0, 3, 41)
+	bool use_pq_default = (info->format == SPA_VIDEO_FORMAT_ABGR_210LE ||
+			       		   info->format == SPA_VIDEO_FORMAT_xBGR_210LE);
+
+	return use_pq_default ? VIDEO_CS_2100_PQ : VIDEO_CS_709;
+#endif
+
+	return VIDEO_CS_709;
 }
 
-static enum video_trc video_trc_from_spa_format(uint32_t spa_format)
+static enum video_trc video_trc_from_spa_info_raw(const struct spa_video_info_raw *info)
 {
-	switch (spa_format) {
+	enum spa_video_transfer_function transfer = info->transfer_function;
+
+	if (transfer != SPA_VIDEO_TRANSFER_UNKNOWN) {
+		switch (transfer) {
+#if PW_CHECK_VERSION(1, 6, 0)
+		case SPA_VIDEO_TRANSFER_SMPTE2084:
+			return VIDEO_TRC_PQ;
+		case SPA_VIDEO_TRANSFER_ARIB_STD_B67:
+			return VIDEO_TRC_HLG;
+#endif
+		case SPA_VIDEO_TRANSFER_SRGB:
+		case SPA_VIDEO_TRANSFER_BT709:
+			return VIDEO_TRC_SRGB;
+		default:
+			break;
+		}
+	}
+
 #if PW_CHECK_VERSION(0, 3, 41)
-	case SPA_VIDEO_FORMAT_ABGR_210LE:
-	case SPA_VIDEO_FORMAT_xBGR_210LE:
+	if (info->format == SPA_VIDEO_FORMAT_ABGR_210LE ||
+	    info->format == SPA_VIDEO_FORMAT_xBGR_210LE)
 		return VIDEO_TRC_PQ;
 #endif
-	case SPA_VIDEO_FORMAT_BGRA:
-	case SPA_VIDEO_FORMAT_RGBA:
-	case SPA_VIDEO_FORMAT_BGRx:
-	case SPA_VIDEO_FORMAT_RGBx:
-	default:
-		return VIDEO_TRC_SRGB;
-	}
+
+	return VIDEO_TRC_SRGB;
 }
 
 static bool prepare_obs_frame(obs_pipewire_stream *obs_pw_stream, struct obs_source_frame *frame)
 {
 	struct obs_pw_video_format obs_pw_video_format;
+	const struct spa_video_info_raw *info = &obs_pw_stream->format.info.raw;
 	enum video_colorspace colorspace;
 	enum video_trc trc;
 
-	frame->width = obs_pw_stream->format.info.raw.size.width;
-	frame->height = obs_pw_stream->format.info.raw.size.height;
+	frame->width = info->size.width;
+	frame->height = info->size.height;
 
-	/* Determine colorspace and TRC based on format (more reliable than SPA metadata) */
-	colorspace = video_colorspace_from_spa_format(obs_pw_stream->format.info.raw.format);
-	trc = video_trc_from_spa_format(obs_pw_stream->format.info.raw.format);
+	/* Determine colorspace and TRC from SPA metadata when available,
+	 * fall back to format-based defaults */
+	colorspace = video_colorspace_from_spa_info_raw(info);
+	trc = video_trc_from_spa_info_raw(info);
 
-	/* For HDR (BT.2020 + PQ), use full range by default */
-	enum video_range_type range = (colorspace == VIDEO_CS_2100_PQ) ? VIDEO_RANGE_FULL :
-				      video_color_range_from_spa_color_range(obs_pw_stream->format.info.raw.color_range);
+	/* For HDR (BT.2020 + PQ), use full range by default when SPA
+	 * does not provide an explicit range */
+	enum video_range_type range =
+		(info->color_range == SPA_VIDEO_COLOR_RANGE_UNKNOWN && colorspace == VIDEO_CS_2100_PQ) ?
+			VIDEO_RANGE_FULL :
+			video_color_range_from_spa_color_range(info->color_range);
 
 	video_format_get_parameters(colorspace, range, frame->color_matrix, frame->color_range_min,
 				    frame->color_range_max);
 
-	if (!obs_pw_video_format_from_spa_format(obs_pw_stream->format.info.raw.format, &obs_pw_video_format) ||
+	if (!obs_pw_video_format_from_spa_format(info->format, &obs_pw_video_format) ||
 	    obs_pw_video_format.video_format == VIDEO_FORMAT_NONE)
 		return false;
 
